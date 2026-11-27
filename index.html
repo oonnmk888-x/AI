@@ -1,0 +1,1189 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <title>Gemini Chat • 3.5 Flash-Lite</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Thai:wght@300;400;500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #0b0f19;
+      --bg-secondary: #111827;
+      --bg-tertiary: #1a2234;
+      --border: #1e293b;
+      --text: #e2e8f0;
+      --text-muted: #94a3b8;
+      --accent: #6366f1;
+      --accent-hover: #818cf8;
+      --user-bg: #312e81;
+      --ai-bg: #1e293b;
+      --danger: #ef4444;
+      --success: #22c55e;
+      --radius: 14px;
+      --shadow: 0 4px 24px rgba(0,0,0,0.4);
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'IBM Plex Sans Thai', 'Inter', system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      height: 100dvh;
+      display: flex;
+      overflow: hidden;
+    }
+
+    .sidebar {
+      width: 280px;
+      background: var(--bg-secondary);
+      border-right: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      transition: transform 0.3s ease;
+      z-index: 50;
+    }
+
+    .sidebar-header {
+      padding: 16px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      gap: 8px;
+    }
+
+    .btn {
+      border: none;
+      border-radius: 10px;
+      padding: 10px 14px;
+      font-size: 14px;
+      font-weight: 500;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      transition: all 0.15s;
+      font-family: inherit;
+    }
+
+    .btn-primary {
+      background: var(--accent);
+      color: white;
+      flex: 1;
+    }
+    .btn-primary:hover { background: var(--accent-hover); }
+
+    .btn-ghost {
+      background: transparent;
+      color: var(--text-muted);
+      border: 1px solid var(--border);
+    }
+    .btn-ghost:hover { background: var(--bg-tertiary); color: var(--text); }
+
+    .chat-list {
+      flex: 1;
+      overflow-y: auto;
+      padding: 12px;
+    }
+
+    .chat-item {
+      padding: 12px 14px;
+      border-radius: 10px;
+      cursor: pointer;
+      margin-bottom: 4px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 8px;
+      transition: background 0.15s;
+      font-size: 14px;
+    }
+    .chat-item:hover { background: var(--bg-tertiary); }
+    .chat-item.active { background: var(--bg-tertiary); border: 1px solid var(--border); }
+
+    .chat-item-title {
+      flex: 1;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .chat-item .delete-btn {
+      opacity: 0;
+      padding: 4px;
+      border: none;
+      background: none;
+      color: var(--text-muted);
+      cursor: pointer;
+      border-radius: 6px;
+    }
+    .chat-item:hover .delete-btn { opacity: 1; }
+    .chat-item .delete-btn:hover { color: var(--danger); background: rgba(239,68,68,0.15); }
+
+    .sidebar-footer {
+      padding: 12px;
+      border-top: 1px solid var(--border);
+    }
+
+    .main {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      min-width: 0;
+    }
+
+    .topbar {
+      height: 56px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      padding: 0 16px;
+      gap: 12px;
+      background: var(--bg-secondary);
+    }
+
+    .menu-btn {
+      display: none;
+      background: none;
+      border: none;
+      color: var(--text);
+      font-size: 22px;
+      cursor: pointer;
+      padding: 6px;
+    }
+
+    .topbar-title {
+      font-weight: 600;
+      font-size: 15px;
+      flex: 1;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--success);
+      display: inline-block;
+      margin-right: 6px;
+    }
+
+    .messages {
+      flex: 1;
+      overflow-y: auto;
+      padding: 24px 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+      overscroll-behavior: contain;
+    }
+
+    .message {
+      max-width: 780px;
+      width: 100%;
+      margin: 0 auto;
+      display: flex;
+      gap: 12px;
+      position: relative;
+    }
+
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(8px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    .avatar {
+      width: 34px;
+      height: 34px;
+      border-radius: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 16px;
+      flex-shrink: 0;
+      margin-top: 2px;
+    }
+    .avatar.user { background: var(--user-bg); }
+    .avatar.ai { background: linear-gradient(135deg, #6366f1, #8b5cf6); }
+
+    .bubble-wrap {
+      flex: 1;
+      min-width: 0;
+    }
+
+    .bubble {
+      padding: 12px 16px;
+      border-radius: var(--radius);
+      line-height: 1.65;
+      font-size: 15px;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    .message.user .bubble { background: var(--user-bg); }
+    .message.ai .bubble { background: var(--ai-bg); border: 1px solid var(--border); }
+
+    .bubble img {
+      max-width: 100%;
+      max-height: 320px;
+      border-radius: 10px;
+      margin-top: 8px;
+      display: block;
+    }
+
+    .bubble pre {
+      background: #0f172a;
+      padding: 12px;
+      border-radius: 8px;
+      overflow-x: auto;
+      margin: 8px 0;
+      font-size: 13px;
+    }
+
+    .bubble code {
+      font-family: 'JetBrains Mono', 'Fira Code', monospace;
+      font-size: 0.9em;
+    }
+
+    .msg-actions {
+      display: flex;
+      gap: 4px;
+      margin-top: 6px;
+      opacity: 0;
+      transition: opacity 0.15s;
+    }
+    .message:hover .msg-actions { opacity: 1; }
+    @media (hover: none) {
+      .msg-actions { opacity: 1; }
+    }
+
+    .copy-btn {
+      background: var(--bg-tertiary);
+      border: 1px solid var(--border);
+      color: var(--text-muted);
+      font-size: 12px;
+      padding: 4px 10px;
+      border-radius: 8px;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      font-family: inherit;
+      transition: all 0.15s;
+    }
+    .copy-btn:hover { background: var(--border); color: var(--text); }
+    .copy-btn.copied { color: var(--success); border-color: var(--success); }
+
+    .typing {
+      display: flex;
+      gap: 5px;
+      padding: 8px 0;
+    }
+    .typing span {
+      width: 7px; height: 7px;
+      background: var(--text-muted);
+      border-radius: 50%;
+      animation: bounce 1.2s infinite;
+    }
+    .typing span:nth-child(2) { animation-delay: 0.15s; }
+    .typing span:nth-child(3) { animation-delay: 0.3s; }
+    @keyframes bounce {
+      0%, 60%, 100% { transform: translateY(0); }
+      30% { transform: translateY(-6px); }
+    }
+
+    .input-area {
+      border-top: 1px solid var(--border);
+      background: var(--bg-secondary);
+      padding: 12px 16px 16px;
+    }
+
+    .input-wrapper {
+      max-width: 780px;
+      margin: 0 auto;
+      position: relative;
+    }
+
+    .attachments {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-bottom: 8px;
+    }
+
+    .attachment-preview {
+      position: relative;
+      border-radius: 10px;
+      overflow: hidden;
+      border: 1px solid var(--border);
+      background: var(--bg-tertiary);
+    }
+    .attachment-preview img {
+      height: 64px;
+      width: auto;
+      display: block;
+    }
+    .attachment-preview .file-chip {
+      padding: 8px 12px;
+      font-size: 13px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .attachment-preview .remove {
+      position: absolute;
+      top: 4px; right: 4px;
+      background: rgba(0,0,0,0.7);
+      border: none;
+      color: white;
+      width: 22px; height: 22px;
+      border-radius: 50%;
+      cursor: pointer;
+      font-size: 12px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .input-box {
+      display: flex;
+      align-items: flex-end;
+      gap: 6px;
+      background: var(--bg-tertiary);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 8px 10px;
+      transition: border-color 0.2s;
+    }
+    .input-box:focus-within { border-color: var(--accent); }
+
+    .input-actions {
+      display: flex;
+      gap: 2px;
+      padding-bottom: 4px;
+      flex-shrink: 0;
+    }
+
+    .icon-btn {
+      background: none;
+      border: none;
+      color: var(--text-muted);
+      width: 36px; height: 36px;
+      border-radius: 10px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 18px;
+      transition: all 0.15s;
+      position: relative;
+    }
+    .icon-btn:hover { background: var(--bg); color: var(--text); }
+    textarea {
+      flex: 1;
+      background: transparent;
+      border: none;
+      color: var(--text);
+      font-family: inherit;
+      font-size: 15px;
+      resize: none;
+      max-height: 160px;
+      padding: 8px 4px;
+      line-height: 1.5;
+      outline: none;
+      min-width: 0;
+    }
+    textarea::placeholder { color: var(--text-muted); }
+
+    .send-btn {
+      background: var(--accent);
+      color: white;
+      border: none;
+      width: 36px; height: 36px;
+      border-radius: 10px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 18px;
+      transition: background 0.15s;
+      flex-shrink: 0;
+    }
+    .send-btn:hover { background: var(--accent-hover); }
+    .send-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+    .hint {
+      text-align: center;
+      font-size: 12px;
+      color: var(--text-muted);
+      margin-top: 8px;
+    }
+
+    .toast {
+      position: fixed;
+      bottom: 100px;
+      left: 50%;
+      transform: translateX(-50%) translateY(20px);
+      background: #1e293b;
+      color: white;
+      padding: 10px 18px;
+      border-radius: 10px;
+      font-size: 14px;
+      z-index: 200;
+      opacity: 0;
+      transition: all 0.25s;
+      pointer-events: none;
+      border: 1px solid var(--border);
+      box-shadow: var(--shadow);
+    }
+    .toast.show {
+      opacity: 1;
+      transform: translateX(-50%) translateY(0);
+    }
+
+    .modal-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.6);
+      backdrop-filter: blur(4px);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      z-index: 100;
+      padding: 16px;
+    }
+    .modal-overlay.open { display: flex; }
+
+    .modal {
+      background: var(--bg-secondary);
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      width: 100%;
+      max-width: 480px;
+      max-height: 90vh;
+      overflow-y: auto;
+      box-shadow: var(--shadow);
+    }
+
+    .modal-header {
+      padding: 18px 20px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .modal-header h2 { font-size: 17px; font-weight: 600; }
+
+    .modal-body { padding: 20px; display: flex; flex-direction: column; gap: 16px; }
+
+    .form-group label {
+      display: block;
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--text-muted);
+      margin-bottom: 6px;
+    }
+
+    .form-group input,
+    .form-group select,
+    .form-group textarea {
+      width: 100%;
+      background: var(--bg-tertiary);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 10px 12px;
+      color: var(--text);
+      font-family: inherit;
+      font-size: 14px;
+      outline: none;
+    }
+    .form-group input:focus,
+    .form-group select:focus,
+    .form-group textarea:focus { border-color: var(--accent); }
+
+    .form-group textarea { min-height: 100px; resize: vertical; }
+
+    .modal-footer {
+      padding: 16px 20px;
+      border-top: 1px solid var(--border);
+      display: flex;
+      gap: 10px;
+      justify-content: flex-end;
+    }
+
+    .empty-state {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      color: var(--text-muted);
+      text-align: center;
+      padding: 40px 20px;
+      gap: 12px;
+    }
+    .empty-state .logo { font-size: 48px; margin-bottom: 8px; }
+    .empty-state h2 { color: var(--text); font-weight: 600; font-size: 20px; }
+
+    .overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.5);
+      z-index: 40;
+    }
+
+    @media (max-width: 768px) {
+      .sidebar {
+        position: fixed;
+        left: 0; top: 0; bottom: 0;
+        transform: translateX(-100%);
+      }
+      .sidebar.open { transform: translateX(0); }
+      .menu-btn { display: block; }
+      .overlay.open { display: block; }
+      .message { gap: 8px; }
+      .avatar { width: 30px; height: 30px; font-size: 14px; }
+    }
+
+    ::-webkit-scrollbar { width: 6px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: #334155; border-radius: 3px; }
+
+    html { -webkit-tap-highlight-color: transparent; }
+    button { touch-action: manipulation; }
+    .message.enter { animation: fadeIn 0.28s cubic-bezier(.2,.8,.2,1); }
+    .messages.fade { animation: fadeIn 0.25s ease; }
+    .btn:active, .icon-btn:active, .send-btn:active { transform: scale(0.94); }
+    .sidebar { transition: transform 0.3s cubic-bezier(.2,.8,.2,1); }
+    .overlay { display: block; opacity: 0; pointer-events: none; transition: opacity 0.3s ease; }
+    .overlay.open { opacity: 1; pointer-events: auto; }
+    .modal-overlay { display: flex; opacity: 0; visibility: hidden; transition: opacity 0.2s, visibility 0.2s; }
+    .modal-overlay.open { opacity: 1; visibility: visible; }
+    .modal { transform: translateY(12px) scale(0.98); transition: transform 0.25s cubic-bezier(.2,.8,.2,1); }
+    .modal-overlay.open .modal { transform: none; }
+    .input-area { padding-bottom: max(16px, env(safe-area-inset-bottom)); }
+    @media (max-width: 768px) { textarea { font-size: 16px; } }
+    @media (prefers-reduced-motion: reduce) { * { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; } }
+  </style>
+</head>
+<body>
+
+  <aside class="sidebar" id="sidebar">
+    <div class="sidebar-header">
+      <button class="btn btn-primary" id="newChatBtn">+ แชทใหม่</button>
+      <button class="btn btn-ghost" id="settingsBtn" title="ตั้งค่า">⚙️</button>
+    </div>
+    <div class="chat-list" id="chatList"></div>
+    <div class="sidebar-footer">
+      <button class="btn btn-ghost" style="width:100%" id="clearAllBtn">🗑️ ล้างประวัติทั้งหมด</button>
+    </div>
+  </aside>
+
+  <div class="overlay" id="overlay"></div>
+
+  <main class="main">
+    <div class="topbar">
+      <button class="menu-btn" id="menuBtn">☰</button>
+      <div class="topbar-title" id="currentTitle">แชทใหม่</div>
+      <div style="font-size:13px;color:var(--text-muted)" id="modelStatus">
+        <span class="status-dot"></span>gemini-3.5-flash-lite
+      </div>
+    </div>
+
+    <div class="messages" id="messages">
+      <div class="empty-state" id="emptyState">
+        <div class="logo">✨</div>
+        <h2>สวัสดี! ฉันคือ Gemini</h2>
+        <p>ถามอะไรก็ได้ หรืออัปโหลดรูปได้เลย</p>
+      </div>
+    </div>
+
+    <div class="input-area">
+      <div class="input-wrapper">
+        <div class="attachments" id="attachments"></div>
+        <div class="input-box">
+          <div class="input-actions">
+            <!-- เลือกรูปจากแกลเลอรี่ -->
+            <button class="icon-btn" id="imageBtn" title="เลือกรูปจากแกลเลอรี่">🖼️</button>
+            <!-- แนบไฟล์อื่น -->
+            <button class="icon-btn" id="attachBtn" title="แนบไฟล์">📎</button>
+            <!-- input สำหรับรูปเท่านั้น (เปิดแกลเลอรี่บนมือถือ) -->
+            <input type="file" id="imageInput"
+              accept="image/*"
+              multiple
+              hidden />
+            <!-- input สำหรับไฟล์ทั่วไป -->
+            <input type="file" id="fileInput"
+              accept="*/*"
+              multiple
+              hidden />
+          </div>
+          <textarea id="userInput" rows="1" placeholder="พิมพ์ข้อความ... (Enter ส่ง)"></textarea>
+          <button class="send-btn" id="sendBtn" title="ส่ง">➤</button>
+        </div>
+        <div class="hint">ใช้ Gemini 3.5 Flash-Lite • Context 1 ล้าน token • ประวัติไม่หาย</div>
+      </div>
+    </div>
+  </main>
+
+  <div class="toast" id="toast"></div>
+
+  <div class="modal-overlay" id="settingsModal">
+    <div class="modal">
+      <div class="modal-header">
+        <h2>ตั้งค่า</h2>
+        <button class="icon-btn" id="closeSettings">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label>Google AI API Key</label>
+          <input type="password" id="apiKeyInput" placeholder="วาง API Key จาก Google AI Studio" />
+          <p style="font-size:12px;color:var(--text-muted);margin-top:6px">
+            รับฟรีที่ <a href="https://aistudio.google.com/apikey" target="_blank" style="color:var(--accent)">aistudio.google.com/apikey</a>
+          </p>
+        </div>
+        <div class="form-group">
+          <label>Model</label>
+          <select id="modelSelect" disabled>
+            <option value="gemini-3.5-flash-lite" selected>gemini-3.5-flash-lite (ฟรี • 1M context)</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>System Prompt (บุคลิก AI)</label>
+          <textarea id="systemPromptInput" placeholder="คุณคือผู้ช่วยที่เป็นมิตร ตอบเป็นภาษาไทย..."></textarea>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-ghost" id="cancelSettings">ยกเลิก</button>
+        <button class="btn btn-primary" id="saveSettings">บันทึก</button>
+      </div>
+    </div>
+  </div>
+
+<script>
+/* ============================================================
+   CONFIG
+   ============================================================ */
+const DEFAULT_SYSTEM_PROMPT = `คุณเป็นผู้ช่วย AI ที่ฉลาด เป็นมิตร และตอบเป็นภาษาไทยเป็นหลัก (เว้นแต่ผู้ใช้จะขอภาษาอื่น)
+ตอบให้กระชับ ชัดเจน และมีประโยชน์
+ถ้ามีรูปภาพหรือไฟล์แนบมา ให้วิเคราะห์และตอบตามเนื้อหานั้น`;
+
+const DEFAULT_MODEL = 'gemini-3.5-flash-lite';
+
+/* ============================================================
+   State
+   ============================================================ */
+let chats = JSON.parse(localStorage.getItem('gemini_chats') || '[]');
+let currentChatId = localStorage.getItem('gemini_current') || null;
+let apiKey = localStorage.getItem('gemini_api_key') || '';
+let model = 'gemini-3.5-flash-lite'; // ใช้เฉพาะตัวนี้
+let systemPrompt = localStorage.getItem('gemini_system') || DEFAULT_SYSTEM_PROMPT;
+let pendingFiles = [];
+let isGenerating = false;
+
+/* ============================================================
+   DOM
+   ============================================================ */
+const $ = id => document.getElementById(id);
+const messagesEl = $('messages');
+const chatListEl = $('chatList');
+const userInput = $('userInput');
+const sendBtn = $('sendBtn');
+const attachmentsEl = $('attachments');
+const emptyState = $('emptyState');
+
+/* ============================================================
+   Toast
+   ============================================================ */
+function showToast(msg, duration = 2200) {
+  const t = $('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  clearTimeout(t._timer);
+  t._timer = setTimeout(() => t.classList.remove('show'), duration);
+}
+
+/* ============================================================
+   Init
+   ============================================================ */
+function init() {
+  if (!currentChatId || !chats.find(c => c.id === currentChatId)) {
+    createNewChat(true);
+  }
+  renderChatList();
+  renderMessages();
+  updateTitle();
+  updateModelStatus();
+
+  userInput.addEventListener('input', () => {
+    userInput.style.height = 'auto';
+    userInput.style.height = Math.min(userInput.scrollHeight, 160) + 'px';
+  });
+
+  userInput.addEventListener('keydown', e => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      sendMessage();
+    }
+  });
+
+  $('sendBtn').onclick = sendMessage;
+  $('newChatBtn').onclick = () => createNewChat(true);
+  $('settingsBtn').onclick = openSettings;
+  $('closeSettings').onclick = closeSettings;
+  $('cancelSettings').onclick = closeSettings;
+  $('saveSettings').onclick = saveSettings;
+  $('clearAllBtn').onclick = clearAllChats;
+  // รูปจากแกลเลอรี่
+  $('imageBtn').onclick = () => $('imageInput').click();
+  $('imageInput').onchange = handleFiles;
+  // ไฟล์ทั่วไป
+  $('attachBtn').onclick = () => $('fileInput').click();
+  $('fileInput').onchange = handleFiles;
+  $('menuBtn').onclick = () => {
+    $('sidebar').classList.add('open');
+    $('overlay').classList.add('open');
+  };
+  $('overlay').onclick = () => {
+    $('sidebar').classList.remove('open');
+    $('overlay').classList.remove('open');
+  };
+}
+
+/* ============================================================
+   Chat Management
+   ============================================================ */
+function createNewChat(switchTo = true) {
+  const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+  const chat = {
+    id,
+    title: 'แชทใหม่',
+    messages: [],
+    createdAt: Date.now()
+  };
+  chats.unshift(chat);
+  if (switchTo) {
+    currentChatId = id;
+    localStorage.setItem('gemini_current', id);
+  }
+  saveChats();
+  renderChatList();
+  if (switchTo) {
+    renderMessages();
+    updateTitle();
+    userInput.focus();
+  }
+  return chat;
+}
+
+function getCurrentChat() {
+  return chats.find(c => c.id === currentChatId);
+}
+
+function switchChat(id) {
+  currentChatId = id;
+  localStorage.setItem('gemini_current', id);
+  renderChatList();
+  renderMessages();
+  updateTitle();
+  $('sidebar').classList.remove('open');
+  $('overlay').classList.remove('open');
+}
+
+function deleteChat(id, e) {
+  e.stopPropagation();
+  if (!confirm('ลบแชทนี้?')) return;
+  chats = chats.filter(c => c.id !== id);
+  if (currentChatId === id) {
+    if (chats.length) {
+      currentChatId = chats[0].id;
+    } else {
+      createNewChat(true);
+      return;
+    }
+  }
+  saveChats();
+  localStorage.setItem('gemini_current', currentChatId);
+  renderChatList();
+  renderMessages();
+  updateTitle();
+}
+
+function clearAllChats() {
+  if (!confirm('ล้างประวัติแชททั้งหมด?')) return;
+  chats = [];
+  createNewChat(true);
+}
+
+function saveChats() {
+  if (chats.length > 50) chats = chats.slice(0, 50);
+  const write = () => localStorage.setItem('gemini_chats', JSON.stringify(chats));
+  try { write(); } catch (e) {
+    // พื้นที่เต็ม: ตัดรูป/ไฟล์ในข้อความเก่าออก
+    chats.forEach(c => c.messages.forEach((m, i) => {
+      if (m.parts && i < c.messages.length - 2) {
+        m.parts = m.parts.map(p => p.inlineData ? { text: '[ไฟล์ถูกลบเพื่อประหยัดพื้นที่]' } : p);
+      }
+    }));
+    try { write(); } catch (e2) { showToast('พื้นที่จัดเก็บเต็ม'); }
+  }
+}
+
+function updateTitle() {
+  const chat = getCurrentChat();
+  $('currentTitle').textContent = chat ? chat.title : 'แชทใหม่';
+}
+
+function updateModelStatus() {
+  const el = $('modelStatus');
+  if (el) el.innerHTML = `<span class="status-dot"></span>${model}`;
+}
+
+/* ============================================================
+   Render
+   ============================================================ */
+function renderChatList() {
+  chatListEl.innerHTML = '';
+  chats.forEach(chat => {
+    const div = document.createElement('div');
+    div.className = 'chat-item' + (chat.id === currentChatId ? ' active' : '');
+    div.innerHTML = `
+      <span class="chat-item-title">${escapeHtml(chat.title)}</span>
+      <button class="delete-btn" title="ลบ">🗑</button>
+    `;
+    div.onclick = () => switchChat(chat.id);
+    div.querySelector('.delete-btn').onclick = (e) => deleteChat(chat.id, e);
+    chatListEl.appendChild(div);
+  });
+}
+
+function buildMessage(msg, idx) {
+  const div = document.createElement('div');
+  div.className = `message ${msg.role === 'user' ? 'user' : 'ai'}`;
+  const avatar = msg.role === 'user' ? '👤' : '✨';
+  let content = '', plainText = '';
+
+  if (msg.parts) {
+    msg.parts.forEach(p => {
+      if (p.text) { content += formatText(p.text); plainText += p.text; }
+      if (p.inlineData) content += `<img src="data:${p.inlineData.mimeType};base64,${p.inlineData.data}" alt="รูป" />`;
+    });
+  } else if (msg.text) {
+    content = formatText(msg.text);
+    plainText = msg.text;
+  }
+
+  div.innerHTML = `
+    <div class="avatar ${msg.role === 'user' ? 'user' : 'ai'}">${avatar}</div>
+    <div class="bubble-wrap">
+      <div class="bubble">${content}</div>
+      <div class="msg-actions">
+        <button class="copy-btn" data-idx="${idx}" title="คัดลอก">📋 คัดลอก</button>
+      </div>
+    </div>
+  `;
+  const copyBtn = div.querySelector('.copy-btn');
+  copyBtn.onclick = () => copyText(plainText, copyBtn);
+  return div;
+}
+
+// วาดทั้งหมด (ตอนสลับแชท) — ไม่ animate ทีละข้อความ แค่ fade รวมครั้งเดียว
+function renderMessages() {
+  const chat = getCurrentChat();
+  messagesEl.innerHTML = '';
+  if (!chat || chat.messages.length === 0) {
+    messagesEl.appendChild(emptyState);
+    emptyState.style.display = 'flex';
+    return;
+  }
+  emptyState.style.display = 'none';
+  const frag = document.createDocumentFragment();
+  chat.messages.forEach((msg, idx) => frag.appendChild(buildMessage(msg, idx)));
+  messagesEl.appendChild(frag);
+  messagesEl.classList.remove('fade');
+  void messagesEl.offsetWidth;
+  messagesEl.classList.add('fade');
+  scrollToBottom(true);
+}
+
+function copyText(text, btn) {
+  if (!text) return;
+  navigator.clipboard.writeText(text).then(() => {
+    btn.textContent = '✅ คัดลอกแล้ว';
+    btn.classList.add('copied');
+    showToast('คัดลอกแล้ว');
+    setTimeout(() => {
+      btn.textContent = '📋 คัดลอก';
+      btn.classList.remove('copied');
+    }, 1800);
+  }).catch(() => {
+    // fallback
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand('copy');
+    document.body.removeChild(ta);
+    btn.textContent = '✅ คัดลอกแล้ว';
+    showToast('คัดลอกแล้ว');
+    setTimeout(() => { btn.textContent = '📋 คัดลอก'; }, 1800);
+  });
+}
+
+function formatText(text) {
+  if ((text.match(/```/g) || []).length % 2) text += '\n```'; // ปิด code block ที่ยังพิมพ์ไม่จบ
+  let t = escapeHtml(text);
+  t = t.replace(/```([\s\S]*?)```/g, '<pre><code>$1</code></pre>');
+  t = t.replace(/`([^`]+)`/g, '<code>$1</code>');
+  t = t.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+  t = t.replace(/\n/g, '<br>');
+  return t;
+}
+
+function escapeHtml(str) {
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+let stick = true;
+messagesEl.addEventListener('scroll', () => {
+  stick = messagesEl.scrollHeight - messagesEl.scrollTop - messagesEl.clientHeight < 80;
+}, { passive: true });
+
+// เลื่อนลงอัตโนมัติเฉพาะตอนผู้ใช้อยู่ล่างสุด (ไม่ดึงหน้าจอตอนกำลังอ่านข้างบน)
+function scrollToBottom(force) {
+  if (force) stick = true;
+  requestAnimationFrame(() => { if (stick) messagesEl.scrollTop = messagesEl.scrollHeight; });
+}
+
+/* ============================================================
+   Files — รองรับมือถือ (แกลเลอรี่ + ไฟล์)
+   ============================================================ */
+function handleFiles(e) {
+  const files = Array.from(e.target.files || []);
+  if (!files.length) return;
+
+  files.forEach(file => {
+    if (file.size > 20 * 1024 * 1024) {
+      showToast(`ไฟล์ ${file.name} ใหญ่เกินไป (สูงสุด 20MB)`);
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      const base64 = reader.result.split(',')[1];
+      pendingFiles.push({
+        name: file.name,
+        mime: file.type || 'application/octet-stream',
+        data: base64,
+        isImage: (file.type || '').startsWith('image/')
+      });
+      renderAttachments();
+    };
+    reader.onerror = () => showToast('อ่านไฟล์ไม่สำเร็จ');
+    reader.readAsDataURL(file);
+  });
+  e.target.value = '';
+}
+
+function renderAttachments() {
+  attachmentsEl.innerHTML = '';
+  pendingFiles.forEach((f, i) => {
+    const div = document.createElement('div');
+    div.className = 'attachment-preview';
+    if (f.isImage) {
+      div.innerHTML = `
+        <img src="data:${f.mime};base64,${f.data}" />
+        <button class="remove" type="button">✕</button>
+      `;
+    } else {
+      div.innerHTML = `
+        <div class="file-chip">📄 ${escapeHtml(f.name)}</div>
+        <button class="remove" type="button">✕</button>
+      `;
+    }
+    div.querySelector('.remove').onclick = () => {
+      pendingFiles.splice(i, 1);
+      renderAttachments();
+    };
+    attachmentsEl.appendChild(div);
+  });
+}
+
+/* ============================================================
+   Send Message
+   ============================================================ */
+async function sendMessage() {
+  const text = userInput.value.trim();
+  if ((!text && pendingFiles.length === 0) || isGenerating) return;
+
+  if (!apiKey) {
+    openSettings();
+    showToast('กรุณาใส่ API Key ก่อนใช้งาน');
+    return;
+  }
+
+  let chat = getCurrentChat();
+  if (!chat) chat = createNewChat(true);
+
+  const parts = [];
+  if (text) parts.push({ text });
+  pendingFiles.forEach(f => {
+    if (f.isImage || f.mime === 'application/pdf' || (f.mime || '').startsWith('text/')) {
+      parts.push({ inlineData: { mimeType: f.mime, data: f.data } });
+    } else {
+      parts.push({ text: `[ไฟล์แนบ: ${f.name}]` });
+    }
+  });
+
+  chat.messages.push({ role: 'user', parts });
+  if (chat.title === 'แชทใหม่' && text) {
+    chat.title = text.slice(0, 40) + (text.length > 40 ? '…' : '');
+  }
+  saveChats();
+  renderChatList();
+  updateTitle();
+
+  emptyState.style.display = 'none';
+  const userEl = buildMessage(chat.messages[chat.messages.length - 1], chat.messages.length - 1);
+  userEl.classList.add('enter');
+  messagesEl.appendChild(userEl);
+
+  userInput.value = '';
+  userInput.style.height = 'auto';
+  pendingFiles = [];
+  renderAttachments();
+
+  isGenerating = true;
+  sendBtn.disabled = true;
+  const aiEl = document.createElement('div');
+  aiEl.className = 'message ai enter';
+  aiEl.innerHTML = `
+    <div class="avatar ai">✨</div>
+    <div class="bubble-wrap"><div class="bubble"><div class="typing"><span></span><span></span><span></span></div></div></div>
+  `;
+  messagesEl.appendChild(aiEl);
+  const bubble = aiEl.querySelector('.bubble');
+  scrollToBottom(true);
+
+  // แสดงคำตอบทีละช่วงแบบ streaming (วาดไม่เกิน 1 ครั้งต่อเฟรม)
+  let acc = '', raf = 0, failed = false, reply = '';
+  const paint = () => { raf = 0; bubble.innerHTML = formatText(acc); scrollToBottom(); };
+  try {
+    reply = await streamGemini(chat, t => { acc = t; if (!raf) raf = requestAnimationFrame(paint); });
+  } catch (err) {
+    console.error(err);
+    failed = true;
+    reply = (acc ? acc + '\n\n' : '') + `⚠️ เกิดข้อผิดพลาด: ${err.message}`;
+  }
+  cancelAnimationFrame(raf);
+
+  chat.messages.push({ role: 'model', parts: [{ text: reply }], ...(failed ? { error: true } : {}) });
+  saveChats();
+  isGenerating = false;
+  sendBtn.disabled = false;
+  if (getCurrentChat() === chat) {
+    const idx = chat.messages.length - 1;
+    aiEl.replaceWith(buildMessage(chat.messages[idx], idx)); // เนื้อหาเดิม ไม่กระพริบ + มีปุ่มคัดลอก
+    scrollToBottom();
+  }
+}
+
+/* ============================================================
+   Gemini API (streaming)
+   ============================================================ */
+/* ส่งประวัติทั้งแชทให้ AI ทุกครั้ง (จำครบตั้งแต่ข้อความแรก ไม่สรุป ไม่ตัด) */
+async function buildContents(chat) {
+  return chat.messages
+    .filter(m => !m.error)
+    .map(m => ({ role: m.role === 'model' ? 'model' : 'user', parts: m.parts }));
+}
+
+async function streamGemini(chat, onText) {
+  const contents = await buildContents(chat);
+
+  const body = {
+    system_instruction: { parts: [{ text: systemPrompt }] },
+    contents,
+    generationConfig: { temperature: 0.8, topP: 0.95, maxOutputTokens: 8192 }
+  };
+
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:streamGenerateContent?alt=sse&key=${apiKey}`;
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body)
+  });
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error?.message || `HTTP ${res.status}`);
+  }
+
+  const reader = res.body.getReader();
+  const dec = new TextDecoder();
+  let buf = '', text = '', blocked = '';
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buf += dec.decode(value, { stream: true });
+    let nl;
+    while ((nl = buf.indexOf('\n')) >= 0) {
+      const line = buf.slice(0, nl).trim();
+      buf = buf.slice(nl + 1);
+      if (!line.startsWith('data:')) continue;
+      const json = line.slice(5).trim();
+      if (!json || json === '[DONE]') continue;
+      let d;
+      try { d = JSON.parse(json); } catch (_) { continue; }
+      if (d.error) throw new Error(d.error.message || 'API error');
+      const c = d.candidates?.[0];
+      (c?.content?.parts || []).forEach(p => { if (p.text && !p.thought) text += p.text; });
+      if (c?.finishReason && !['STOP', 'MAX_TOKENS'].includes(c.finishReason)) blocked = c.finishReason;
+      if (text) onText(text);
+    }
+  }
+  if (!text) throw new Error(blocked ? `คำตอบถูกบล็อก (${blocked})` : 'ไม่ได้รับคำตอบจาก AI');
+  return text;
+}
+
+/* ============================================================
+   Settings
+   ============================================================ */
+function openSettings() {
+  $('apiKeyInput').value = apiKey;
+  $('modelSelect').value = model;
+  $('systemPromptInput').value = systemPrompt;
+  $('settingsModal').classList.add('open');
+}
+
+function closeSettings() {
+  $('settingsModal').classList.remove('open');
+}
+
+function saveSettings() {
+  apiKey = $('apiKeyInput').value.trim();
+  model = 'gemini-3.5-flash-lite'; // ใช้เฉพาะตัวนี้
+  systemPrompt = $('systemPromptInput').value.trim() || DEFAULT_SYSTEM_PROMPT;
+
+  localStorage.setItem('gemini_api_key', apiKey);
+  localStorage.setItem('gemini_model', model);
+  localStorage.setItem('gemini_system', systemPrompt);
+
+  updateModelStatus();
+  closeSettings();
+  showToast('บันทึกการตั้งค่าแล้ว');
+}
+
+/* ============================================================
+   Start
+   ============================================================ */
+init();
+</script>
+</body>
+</html>
