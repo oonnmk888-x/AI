@@ -566,6 +566,11 @@
     .input-area { padding-bottom: max(16px, env(safe-area-inset-bottom)); }
     @media (max-width: 768px) { textarea { font-size: 16px; } }
     @media (prefers-reduced-motion: reduce) { * { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; } }
+    .send-btn.stop { background: #ef4444; }
+    .edit-box { width: 100%; min-height: 90px; background: rgba(0,0,0,.25); color: inherit; border: 1px solid rgba(255,255,255,.25); border-radius: 10px; padding: 10px; font: inherit; font-size: 16px; resize: vertical; }
+    .edit-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 8px; }
+    .sources { margin-top: 6px; font-size: 12px; opacity: .85; line-height: 1.8; }
+    .sources a { color: inherit; margin-right: 10px; text-decoration: underline; }
   </style>
 </head>
 <body>
@@ -729,7 +734,7 @@ function init() {
     }
   });
 
-  $('sendBtn').onclick = sendMessage;
+  $('sendBtn').onclick = () => isGenerating ? (abortCtl && abortCtl.abort()) : sendMessage();
   $('newChatBtn').onclick = () => createNewChat(true);
   $('settingsBtn').onclick = openSettings;
   $('closeSettings').onclick = closeSettings;
@@ -879,13 +884,19 @@ function buildMessage(msg, idx) {
     <div class="avatar ${msg.role === 'user' ? 'user' : 'ai'}">${avatar}</div>
     <div class="bubble-wrap">
       <div class="bubble">${content}</div>
+      ${msg.sources && msg.sources.length ? '<div class="sources">🔎 แหล่งข้อมูล: ' + msg.sources.slice(0, 5).map(x => `<a href="${escapeHtml(x.uri)}" target="_blank" rel="noopener">${escapeHtml(x.title)}</a>`).join('') + '</div>' : ''}
       <div class="msg-actions">
         <button class="copy-btn" data-idx="${idx}" title="คัดลอก">📋 คัดลอก</button>
+        ${msg.role === 'user' ? '<button class="copy-btn" data-act="edit">✏️ แก้ไข</button>' : ''}
+        <button class="copy-btn" data-act="del">🗑️ ลบ</button>
       </div>
     </div>
   `;
   const copyBtn = div.querySelector('.copy-btn');
   copyBtn.onclick = () => copyText(plainText, copyBtn);
+  const ed = div.querySelector('[data-act="edit"]');
+  if (ed) ed.onclick = () => startEdit(idx, div);
+  div.querySelector('[data-act="del"]').onclick = () => deleteMessage(idx);
   return div;
 }
 
@@ -1058,8 +1069,21 @@ async function sendMessage() {
   pendingFiles = [];
   renderAttachments();
 
-  isGenerating = true;
-  sendBtn.disabled = true;
+  await generateReply(chat);
+}
+
+let abortCtl = null;
+
+function setBusy(b) {
+  isGenerating = b;
+  sendBtn.textContent = b ? '■' : '➤';
+  sendBtn.title = b ? 'หยุดคำตอบ' : 'ส่ง';
+  sendBtn.classList.toggle('stop', b);
+}
+
+async function generateReply(chat) {
+  setBusy(true);
+  abortCtl = new AbortController();
   const aiEl = document.createElement('div');
   aiEl.className = 'message ai enter';
   aiEl.innerHTML = `
@@ -1070,27 +1094,71 @@ async function sendMessage() {
   const bubble = aiEl.querySelector('.bubble');
   scrollToBottom(true);
 
-  // แสดงคำตอบทีละช่วงแบบ streaming (วาดไม่เกิน 1 ครั้งต่อเฟรม)
-  let acc = '', raf = 0, failed = false, reply = '';
+  let acc = '', raf = 0, failed = false, stopped = false, reply = '', sources = [];
   const paint = () => { raf = 0; bubble.innerHTML = formatText(acc); scrollToBottom(); };
   try {
-    reply = await streamGemini(chat, t => { acc = t; if (!raf) raf = requestAnimationFrame(paint); });
+    const r = await streamGemini(chat, t => { acc = t; if (!raf) raf = requestAnimationFrame(paint); }, abortCtl.signal);
+    reply = r.text;
+    sources = r.sources;
   } catch (err) {
-    console.error(err);
-    failed = true;
-    reply = (acc ? acc + '\n\n' : '') + `⚠️ เกิดข้อผิดพลาด: ${err.message}`;
+    if (err.name === 'AbortError') { stopped = true; reply = acc; }
+    else {
+      console.error(err);
+      failed = true;
+      reply = (acc ? acc + '\n\n' : '') + `⚠️ เกิดข้อผิดพลาด: ${err.message}`;
+    }
   }
   cancelAnimationFrame(raf);
+  abortCtl = null;
+  setBusy(false);
 
-  chat.messages.push({ role: 'model', parts: [{ text: reply }], ...(failed ? { error: true } : {}) });
-  saveChats();
-  isGenerating = false;
-  sendBtn.disabled = false;
+  if (reply) {
+    chat.messages.push({ role: 'model', parts: [{ text: reply }], ...(failed ? { error: true } : {}), ...(sources.length ? { sources } : {}) });
+    saveChats();
+  }
   if (getCurrentChat() === chat) {
-    const idx = chat.messages.length - 1;
-    aiEl.replaceWith(buildMessage(chat.messages[idx], idx)); // เนื้อหาเดิม ไม่กระพริบ + มีปุ่มคัดลอก
+    if (reply) {
+      const idx = chat.messages.length - 1;
+      aiEl.replaceWith(buildMessage(chat.messages[idx], idx));
+    } else aiEl.remove();
     scrollToBottom();
   }
+}
+
+function deleteMessage(idx) {
+  if (isGenerating) return showToast('รอให้ AI ตอบเสร็จ หรือกด ■ หยุดก่อน');
+  const chat = getCurrentChat();
+  const m = chat.messages[idx];
+  const pair = m.role === 'user' && chat.messages[idx + 1] && chat.messages[idx + 1].role === 'model';
+  if (!confirm(pair ? 'ลบข้อความนี้และคำตอบของ AI ที่ตามมา?' : 'ลบข้อความนี้?')) return;
+  chat.messages.splice(idx, pair ? 2 : 1);
+  saveChats();
+  renderMessages();
+  renderChatList();
+}
+
+function startEdit(idx, div) {
+  if (isGenerating) return showToast('รอให้ AI ตอบเสร็จ หรือกด ■ หยุดก่อน');
+  const chat = getCurrentChat();
+  const msg = chat.messages[idx];
+  const bubble = div.querySelector('.bubble');
+  bubble.innerHTML = '<textarea class="edit-box"></textarea><div class="edit-actions"><button class="btn btn-ghost cancel" type="button">ยกเลิก</button><button class="btn btn-primary save" type="button">บันทึกและถามใหม่</button></div>';
+  const box = bubble.querySelector('.edit-box');
+  box.value = (msg.parts || []).filter(p => p.text).map(p => p.text).join('\n');
+  box.focus();
+  bubble.querySelector('.cancel').onclick = () => renderMessages();
+  bubble.querySelector('.save').onclick = async () => {
+    if (!apiKey) { openSettings(); return showToast('กรุณาใส่ API Key ก่อนใช้งาน'); }
+    const t = box.value.trim();
+    const rest = (msg.parts || []).filter(p => !p.text);
+    if (!t && !rest.length) return showToast('ข้อความว่างเปล่า');
+    msg.parts = [...(t ? [{ text: t }] : []), ...rest];
+    chat.messages.length = idx + 1; // ข้อความหลังจากนี้ถูกลบ แล้วให้ AI ตอบใหม่
+    saveChats();
+    renderMessages();
+    renderChatList();
+    await generateReply(chat);
+  };
 }
 
 /* ============================================================
@@ -1103,22 +1171,30 @@ async function buildContents(chat) {
     .map(m => ({ role: m.role === 'model' ? 'model' : 'user', parts: m.parts }));
 }
 
-async function streamGemini(chat, onText) {
+async function streamGemini(chat, onText, signal) {
   const contents = await buildContents(chat);
-
+  const now = new Date();
+  const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const timeInfo = `\n\nวันและเวลาปัจจุบันของผู้ใช้: ${now.toLocaleString('th-TH', { dateStyle: 'full', timeStyle: 'short' })} (ค.ศ. ${now.getFullYear()}, เขตเวลา ${tz})\nถ้าคำถามเกี่ยวกับข่าว เหตุการณ์ ราคา หรือข้อมูลที่อาจเปลี่ยนแปลง ให้ค้นเว็บเพื่อใช้ข้อมูลล่าสุดเสมอ`;
   const body = {
-    system_instruction: { parts: [{ text: systemPrompt }] },
+    system_instruction: { parts: [{ text: systemPrompt + timeInfo }] },
     contents,
     generationConfig: { temperature: 0.8, topP: 0.95, maxOutputTokens: 8192 }
   };
-
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:streamGenerateContent?alt=sse&key=${apiKey}`;
-  const res = await fetch(url, {
+  const send = useSearch => fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body)
+    body: JSON.stringify(useSearch ? { ...body, tools: [{ google_search: {} }] } : body),
+    signal
   });
 
+  let res = await send(true);
+  if (!res.ok && [400, 403, 429].includes(res.status)) {
+    // ค้นเว็บไม่ได้ (เช่น โควต้าค้นหาหมด) -> ลองตอบแบบไม่ค้น
+    res = await send(false);
+    if (res.ok) showToast('ค้นเว็บไม่ได้ตอนนี้ ตอบจากความรู้เดิมแทน', 3500);
+  }
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err.error?.message || `HTTP ${res.status}`);
@@ -1127,6 +1203,7 @@ async function streamGemini(chat, onText) {
   const reader = res.body.getReader();
   const dec = new TextDecoder();
   let buf = '', text = '', blocked = '';
+  const sources = [];
 
   while (true) {
     const { done, value } = await reader.read();
@@ -1144,12 +1221,15 @@ async function streamGemini(chat, onText) {
       if (d.error) throw new Error(d.error.message || 'API error');
       const c = d.candidates?.[0];
       (c?.content?.parts || []).forEach(p => { if (p.text && !p.thought) text += p.text; });
+      (c?.groundingMetadata?.groundingChunks || []).forEach(g => {
+        if (g.web && g.web.uri && !sources.some(x => x.uri === g.web.uri)) sources.push({ title: g.web.title || g.web.uri, uri: g.web.uri });
+      });
       if (c?.finishReason && !['STOP', 'MAX_TOKENS'].includes(c.finishReason)) blocked = c.finishReason;
       if (text) onText(text);
     }
   }
   if (!text) throw new Error(blocked ? `คำตอบถูกบล็อก (${blocked})` : 'ไม่ได้รับคำตอบจาก AI');
-  return text;
+  return { text, sources };
 }
 
 /* ============================================================
