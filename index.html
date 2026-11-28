@@ -1175,25 +1175,33 @@ async function streamGemini(chat, onText, signal) {
   const contents = await buildContents(chat);
   const now = new Date();
   const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
-  const timeInfo = `\n\nวันและเวลาปัจจุบันของผู้ใช้: ${now.toLocaleString('th-TH', { dateStyle: 'full', timeStyle: 'short' })} (ค.ศ. ${now.getFullYear()}, เขตเวลา ${tz})\nถ้าคำถามเกี่ยวกับข่าว เหตุการณ์ ราคา หรือข้อมูลที่อาจเปลี่ยนแปลง ให้ค้นเว็บเพื่อใช้ข้อมูลล่าสุดเสมอ`;
+  const timeInfo = `\n\nวันและเวลาปัจจุบันของผู้ใช้: ${now.toLocaleString('th-TH', { dateStyle: 'full', timeStyle: 'short' })} (ค.ศ. ${now.getFullYear()}, เขตเวลา ${tz})\nถ้าคำถามเกี่ยวกับข่าว เหตุการณ์ ราคา หรือข้อมูลที่อาจเปลี่ยนแปลง ให้ค้นเว็บเพื่อใช้ข้อมูลล่าสุดเสมอ\nห้ามอ้างความสามารถที่ไม่มีจริง และห้ามบอกว่าค้นเว็บได้ถ้าไม่ได้ใช้ผลการค้นจริง`;
+  const NOSEARCH = '\n\nข้อสำคัญ: ในคำตอบนี้ระบบค้นเว็บใช้ไม่ได้ ห้ามอ้างว่าค้นเว็บหรือรู้ข้อมูลเรียลไทม์ได้ ถ้าคำถามต้องใช้ข้อมูลล่าสุด (ข่าว ราคา ผลการแข่งขัน ฯลฯ) ให้บอกผู้ใช้ตรง ๆ ว่าตอนนี้ค้นเว็บไม่ได้ และข้อมูลที่ให้อาจไม่ใช่ล่าสุด';
   const body = {
     system_instruction: { parts: [{ text: systemPrompt + timeInfo }] },
     contents,
     generationConfig: { temperature: 0.8, topP: 0.95, maxOutputTokens: 8192 }
   };
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:streamGenerateContent?alt=sse&key=${apiKey}`;
-  const send = useSearch => fetch(url, {
+  const send = (useSearch, note = '') => fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(useSearch ? { ...body, tools: [{ google_search: {} }] } : body),
+    body: JSON.stringify({
+      ...body,
+      system_instruction: { parts: [{ text: systemPrompt + timeInfo + note }] },
+      ...(useSearch ? { tools: [{ google_search: {} }] } : {})
+    }),
     signal
   });
 
   let res = await send(true);
   if (!res.ok && [400, 403, 429].includes(res.status)) {
     // ค้นเว็บไม่ได้ (เช่น โควต้าค้นหาหมด) -> ลองตอบแบบไม่ค้น
-    res = await send(false);
-    if (res.ok) showToast('ค้นเว็บไม่ได้ตอนนี้ ตอบจากความรู้เดิมแทน', 3500);
+    const e1 = await res.json().catch(() => ({}));
+    const why = e1.error?.message || ('HTTP ' + res.status);
+    console.warn('ค้นเว็บไม่ได้:', why);
+    res = await send(false, NOSEARCH);
+    if (res.ok) showToast('ค้นเว็บไม่ได้: ' + why.slice(0, 140), 7000);
   }
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
