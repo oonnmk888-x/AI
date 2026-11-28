@@ -1097,7 +1097,8 @@ async function generateReply(chat) {
   let acc = '', raf = 0, failed = false, stopped = false, reply = '', sources = [];
   const paint = () => { raf = 0; bubble.innerHTML = formatText(acc); scrollToBottom(); };
   try {
-    const r = await streamGemini(chat, t => { acc = t; if (!raf) raf = requestAnimationFrame(paint); }, abortCtl.signal);
+    const r = await streamGemini(chat, t => { acc = t; if (!raf) raf = requestAnimationFrame(paint); }, abortCtl.signal,
+      label => { bubble.innerHTML = (acc ? formatText(acc) : '') + '<div class="sources">' + escapeHtml(label) + '</div>'; scrollToBottom(); });
     reply = r.text;
     sources = r.sources;
   } catch (err) {
@@ -1171,70 +1172,158 @@ async function buildContents(chat) {
     .map(m => ({ role: m.role === 'model' ? 'model' : 'user', parts: m.parts }));
 }
 
-async function streamGemini(chat, onText, signal) {
+/* ---------- ทักษะ/เครื่องมือหาข้อมูลล่าสุด (ฟรี ไม่ใช้ Google Search ของ API) ---------- */
+const TOOLS = [
+  { name: 'web_search', description: 'ค้นเว็บทั่วไป เพื่อหาข้อมูลล่าสุด ข้อเท็จจริง ราคา ผลการแข่งขัน รีวิว ฯลฯ', parameters: { type: 'OBJECT', properties: { query: { type: 'STRING', description: 'คำค้น' } }, required: ['query'] } },
+  { name: 'get_news', description: 'ค้นข่าวล่าสุดจาก Google News พร้อมวันเวลา', parameters: { type: 'OBJECT', properties: { query: { type: 'STRING' }, lang: { type: 'STRING', description: 'th หรือ en (ค่าเริ่มต้น th)' } }, required: ['query'] } },
+  { name: 'read_page', description: 'อ่านเนื้อหาหน้าเว็บจาก URL เพื่อดูรายละเอียดเต็ม', parameters: { type: 'OBJECT', properties: { url: { type: 'STRING' } }, required: ['url'] } },
+  { name: 'get_weather', description: 'สภาพอากาศปัจจุบันและพยากรณ์ 3 วันของเมือง', parameters: { type: 'OBJECT', properties: { city: { type: 'STRING' } }, required: ['city'] } }
+];
+
+// ในแอป Android ใช้ HTTP ของระบบ (ไม่ติด CORS) ถ้าไม่ใช่แอปจะใช้ fetch ธรรมดา
+async function httpGet(url, headers = {}) {
+  const H = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.CapacitorHttp;
+  if (H) {
+    const r = await H.get({ url, headers, responseType: 'text' });
+    if (r.status >= 400) throw new Error('HTTP ' + r.status);
+    return typeof r.data === 'string' ? r.data : JSON.stringify(r.data);
+  }
+  const r = await fetch(url, { headers });
+  if (!r.ok) throw new Error('HTTP ' + r.status);
+  return r.text();
+}
+
+async function runTool(name, a, sources) {
+  const q = encodeURIComponent;
+  if (name === 'web_search') {
+    const html = await httpGet('https://html.duckduckgo.com/html/?q=' + q(a.query) + '&kl=th-th',
+      { 'User-Agent': 'Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Mobile Safari/537.36' });
+    const doc = new DOMParser().parseFromString(html, 'text/html');
+    const out = [];
+    doc.querySelectorAll('.result').forEach(el => {
+      const link = el.querySelector('.result__a');
+      if (!link || out.length >= 6) return;
+      let href = link.getAttribute('href') || '';
+      const m = href.match(/[?&]uddg=([^&]+)/);
+      if (m) href = decodeURIComponent(m[1]);
+      if (href.startsWith('//')) href = 'https:' + href;
+      const title = link.textContent.trim();
+      out.push({ title, url: href, snippet: ((el.querySelector('.result__snippet') || {}).textContent || '').trim() });
+      sources.push({ title, uri: href });
+    });
+    if (!out.length) throw new Error('ไม่พบผลค้นหา (อาจถูกบล็อกชั่วคราว) ลองใช้ get_news หรือคำค้นอื่น');
+    return out;
+  }
+  if (name === 'get_news') {
+    const l = a.lang === 'en' ? ['en', 'US', 'US:en'] : ['th', 'TH', 'TH:th'];
+    const xml = await httpGet(`https://news.google.com/rss/search?q=${q(a.query)}&hl=${l[0]}&gl=${l[1]}&ceid=${l[2]}`);
+    const doc = new DOMParser().parseFromString(xml, 'text/xml');
+    const items = [...doc.querySelectorAll('item')].slice(0, 8).map(it => ({
+      title: (it.querySelector('title') || {}).textContent,
+      source: (it.querySelector('source') || {}).textContent,
+      date: (it.querySelector('pubDate') || {}).textContent,
+      url: (it.querySelector('link') || {}).textContent
+    }));
+    if (!items.length) throw new Error('ไม่พบข่าว');
+    items.forEach(it => sources.push({ title: it.source || it.title, uri: it.url }));
+    return items;
+  }
+  if (name === 'read_page') {
+    const t = await httpGet('https://r.jina.ai/' + a.url);
+    sources.push({ title: a.url, uri: a.url });
+    return t.slice(0, 8000);
+  }
+  if (name === 'get_weather') {
+    const g = JSON.parse(await httpGet('https://geocoding-api.open-meteo.com/v1/search?count=1&language=th&name=' + q(a.city)));
+    const loc = g.results && g.results[0];
+    if (!loc) throw new Error('ไม่พบเมืองนี้');
+    const w = JSON.parse(await httpGet(`https://api.open-meteo.com/v1/forecast?latitude=${loc.latitude}&longitude=${loc.longitude}&current=temperature_2m,apparent_temperature,relative_humidity_2m,precipitation,wind_speed_10m,weather_code&daily=temperature_2m_max,temperature_2m_min,precipitation_probability_max&timezone=auto&forecast_days=3`));
+    sources.push({ title: 'Open-Meteo', uri: 'https://open-meteo.com' });
+    return { city: loc.name + ', ' + (loc.country || ''), current: w.current, daily: w.daily, note: 'weather_code ตามมาตรฐาน WMO' };
+  }
+  throw new Error('ไม่มีเครื่องมือชื่อ ' + name);
+}
+
+const TOOL_LABEL = { web_search: '🔎 กำลังค้นเว็บ', get_news: '📰 กำลังหาข่าว', read_page: '📄 กำลังอ่านหน้าเว็บ', get_weather: '🌤️ กำลังดูอากาศ' };
+
+async function streamGemini(chat, onText, signal, onStatus) {
   const contents = await buildContents(chat);
   const now = new Date();
   const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
-  const timeInfo = `\n\nวันและเวลาปัจจุบันของผู้ใช้: ${now.toLocaleString('th-TH', { dateStyle: 'full', timeStyle: 'short' })} (ค.ศ. ${now.getFullYear()}, เขตเวลา ${tz})\nถ้าคำถามเกี่ยวกับข่าว เหตุการณ์ ราคา หรือข้อมูลที่อาจเปลี่ยนแปลง ให้ค้นเว็บเพื่อใช้ข้อมูลล่าสุดเสมอ\nห้ามอ้างความสามารถที่ไม่มีจริง และห้ามบอกว่าค้นเว็บได้ถ้าไม่ได้ใช้ผลการค้นจริง`;
-  const NOSEARCH = '\n\nข้อสำคัญ: ในคำตอบนี้ระบบค้นเว็บใช้ไม่ได้ ห้ามอ้างว่าค้นเว็บหรือรู้ข้อมูลเรียลไทม์ได้ ถ้าคำถามต้องใช้ข้อมูลล่าสุด (ข่าว ราคา ผลการแข่งขัน ฯลฯ) ให้บอกผู้ใช้ตรง ๆ ว่าตอนนี้ค้นเว็บไม่ได้ และข้อมูลที่ให้อาจไม่ใช่ล่าสุด';
-  const body = {
-    system_instruction: { parts: [{ text: systemPrompt + timeInfo }] },
-    contents,
-    generationConfig: { temperature: 0.8, topP: 0.95, maxOutputTokens: 8192 }
-  };
+  const timeInfo = `\n\nวันและเวลาปัจจุบันของผู้ใช้: ${now.toLocaleString('th-TH', { dateStyle: 'full', timeStyle: 'short' })} (ค.ศ. ${now.getFullYear()}, เขตเวลา ${tz})\nคุณมีเครื่องมือ web_search, get_news, read_page, get_weather ใช้เมื่อคำถามต้องการข้อมูลล่าสุด เช่น ข่าว ราคา อากาศ ผลการแข่งขัน ของใหม่ ห้ามเดาเอง ถ้าจำเป็นให้ใช้หลายเครื่องมือต่อกัน (เช่น ค้นแล้วอ่านหน้าเว็บ) และบอกผู้ใช้สั้น ๆ ว่าข้อมูลมาจากไหน ถ้าเครื่องมือล้มเหลวให้บอกตรง ๆ ห้ามอ้างความสามารถที่ไม่มีจริง`;
+  const NOSEARCH = '\n\nข้อสำคัญ: ในคำตอบนี้เครื่องมือค้นหาใช้ไม่ได้ ห้ามอ้างว่าค้นเว็บหรือรู้ข้อมูลเรียลไทม์ได้ ถ้าคำถามต้องใช้ข้อมูลล่าสุดให้บอกผู้ใช้ตรง ๆ ว่าตอนนี้ค้นไม่ได้ และข้อมูลที่ให้อาจไม่ใช่ล่าสุด';
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:streamGenerateContent?alt=sse&key=${apiKey}`;
-  const send = (useSearch, note = '') => fetch(url, {
+  const post = (tools, note = '') => fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      ...body,
       system_instruction: { parts: [{ text: systemPrompt + timeInfo + note }] },
-      ...(useSearch ? { tools: [{ google_search: {} }] } : {})
+      contents,
+      generationConfig: { temperature: 0.8, topP: 0.95, maxOutputTokens: 8192 },
+      ...(tools ? { tools: [{ function_declarations: TOOLS }] } : {})
     }),
     signal
   });
 
-  let res = await send(true);
-  if (!res.ok && [400, 403, 429].includes(res.status)) {
-    // ค้นเว็บไม่ได้ (เช่น โควต้าค้นหาหมด) -> ลองตอบแบบไม่ค้น
-    const e1 = await res.json().catch(() => ({}));
-    const why = e1.error?.message || ('HTTP ' + res.status);
-    console.warn('ค้นเว็บไม่ได้:', why);
-    res = await send(false, NOSEARCH);
-    if (res.ok) showToast('ค้นเว็บไม่ได้: ' + why.slice(0, 140), 7000);
-  }
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.error?.message || `HTTP ${res.status}`);
-  }
-
-  const reader = res.body.getReader();
-  const dec = new TextDecoder();
-  let buf = '', text = '', blocked = '';
+  let useTools = true, note = '', text = '', blocked = '';
   const sources = [];
 
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buf += dec.decode(value, { stream: true });
-    let nl;
-    while ((nl = buf.indexOf('\n')) >= 0) {
-      const line = buf.slice(0, nl).trim();
-      buf = buf.slice(nl + 1);
-      if (!line.startsWith('data:')) continue;
-      const json = line.slice(5).trim();
-      if (!json || json === '[DONE]') continue;
-      let d;
-      try { d = JSON.parse(json); } catch (_) { continue; }
-      if (d.error) throw new Error(d.error.message || 'API error');
-      const c = d.candidates?.[0];
-      (c?.content?.parts || []).forEach(p => { if (p.text && !p.thought) text += p.text; });
-      (c?.groundingMetadata?.groundingChunks || []).forEach(g => {
-        if (g.web && g.web.uri && !sources.some(x => x.uri === g.web.uri)) sources.push({ title: g.web.title || g.web.uri, uri: g.web.uri });
-      });
-      if (c?.finishReason && !['STOP', 'MAX_TOKENS'].includes(c.finishReason)) blocked = c.finishReason;
-      if (text) onText(text);
+  for (let round = 0; round < 5; round++) {
+    let res = await post(useTools, note);
+    if (!res.ok && useTools && [400, 403, 429].includes(res.status)) {
+      const e1 = await res.json().catch(() => ({}));
+      const why = e1.error?.message || ('HTTP ' + res.status);
+      console.warn('เครื่องมือใช้ไม่ได้:', why);
+      useTools = false; note = NOSEARCH;
+      res = await post(false, note);
+      if (res.ok) showToast('ใช้เครื่องมือค้นหาไม่ได้: ' + why.slice(0, 120), 6000);
     }
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error?.message || `HTTP ${res.status}`);
+    }
+
+    const reader = res.body.getReader();
+    const dec = new TextDecoder();
+    let buf = '';
+    const parts = [], calls = [];
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      let nl;
+      while ((nl = buf.indexOf('\n')) >= 0) {
+        const line = buf.slice(0, nl).trim();
+        buf = buf.slice(nl + 1);
+        if (!line.startsWith('data:')) continue;
+        const json = line.slice(5).trim();
+        if (!json || json === '[DONE]') continue;
+        let d;
+        try { d = JSON.parse(json); } catch (_) { continue; }
+        if (d.error) throw new Error(d.error.message || 'API error');
+        const c = d.candidates?.[0];
+        (c?.content?.parts || []).forEach(p => {
+          parts.push(p); // เก็บ part ทั้งก้อน (รวม thoughtSignature) ส่งกลับตอนเรียกเครื่องมือ
+          if (p.text && !p.thought) text += p.text;
+          if (p.functionCall) calls.push(p.functionCall);
+        });
+        if (c?.finishReason && !['STOP', 'MAX_TOKENS'].includes(c.finishReason)) blocked = c.finishReason;
+        if (text) onText(text);
+      }
+    }
+    if (!calls.length) break;
+
+    contents.push({ role: 'model', parts });
+    const answers = [];
+    for (const fc of calls) {
+      const args = fc.args || {};
+      if (onStatus) onStatus((TOOL_LABEL[fc.name] || '⚙️ ใช้เครื่องมือ') + ': ' + (args.query || args.url || args.city || ''));
+      let out;
+      try { out = await runTool(fc.name, args, sources); }
+      catch (e) { out = { error: String(e.message || e) }; }
+      answers.push({ functionResponse: { name: fc.name, response: { result: out } } });
+    }
+    contents.push({ role: 'user', parts: answers });
   }
   if (!text) throw new Error(blocked ? `คำตอบถูกบล็อก (${blocked})` : 'ไม่ได้รับคำตอบจาก AI');
   return { text, sources };
